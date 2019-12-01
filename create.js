@@ -1,9 +1,11 @@
 const express   = require('express');
 const app       = express();
 const http      = require('http');
+const sha       = require('sha1');
+const BigInt    = require('big-integer');
 
-const M         = 4;
-const N         = 10;
+const M         = 11;
+const N         = 4096;
 
 let successor   = undefined;
 let predecessor = undefined;
@@ -13,6 +15,12 @@ let fingerTable = undefined;
 
 const power2    = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
+
+/************** */
+
+let psudoDataBase = [];
+
+/************** */
 function gtAndLt(key, lowerBound, upperBound){
     let d1 = (key - lowerBound + N) % N + N % N;
     let d2 = (upperBound - lowerBound + N) % N + N % N;
@@ -35,6 +43,13 @@ function printDetails(){
     console.log(fingerTable);
     console.log(successor);
     console.log(predecessor);
+}
+
+function getId(msg){
+    let hash = sha(msg);
+    let id   = BigInt(hash, 16).mod(N);
+    console.log(id);
+    return id.valueOf();
 }
 
 
@@ -113,10 +128,11 @@ function fixFinger(){
         if(err){
             console.log(err);
         } else {
-            fs_res = parseInt(fs_res, 10);
+            //fs_res = parseInt(fs_res, 10);
+            fs_res = JSON.parse(fs_res);
             fingerTable[fingerIndex] = {
-                port  : fs_res,
-                id    : fs_res % N
+                port : fs_res.port,
+                id   : fs_res.id
             };
             fingerIndex = (fingerIndex + 1) % M;
         }
@@ -128,13 +144,16 @@ function stabilize(){
         if(err){
             console.log(err);
         } else {
-            x = parseInt(x, 10);
-            if(successor.id == myId || gtAndLt(x % N, myId, successor.id)){ //myId < x && x < successor.id
+            //x = parseInt(x, 10);
+            x = JSON.parse(x);
+
+            if(successor.id == myId || gtAndLt(x.id, myId, successor.id)){ //myId < x && x < successor.id
                 successor = {
-                    port: x,
-                    id: x % N
+                    port : x.port,
+                    id   : x.id
                 };
             }
+
             notify(successor.port, myPort, myId);
             
             fixFinger();
@@ -147,16 +166,16 @@ function stabilize(){
 
 function closestPrecedingNode(id){
     if(id == myId || myId == successor.id){
-        return (myPort);
+        return ({port : myPort, id : myId});
     }
 
     for(let i = M - 1; i >= 0; --i){
         if(fingerTable[i].id == id || gtAndLt(fingerTable[i].id, myId, id)){ // myId < fingerTable[i].id && fingerTable[i].id <= id
-           return (fingerTable[i].port);
+           return ({port : fingerTable[i].port, id : fingerTable[i].id});
         }
     }
 
-    return (myPort);
+    return ({port : myPort, id : myId});
 }
 
 ////////
@@ -167,65 +186,68 @@ app.get('/findSuccessor/:id', (req, res) =>{
     let id = parseInt(req.params.id, 10) % 10;
 
     if(id == myId){
-        return res.send(myPort.toString());
+        return res.json({
+            port : myPort,
+            id   : myId,
+            err  : null 
+        });
     }
 
     if(successor.id == myId || gtAndLt(id, myId, successor.id) || id == successor.id){ //(myId < id && id <= successor.id)
-        return res.send(successor.port.toString());
+        return res.json({
+            port : successor.port,
+            id   : successor.id,
+            err  : null 
+        });
     }
     else{
         let cpn = closestPrecedingNode(id);
 
-        if(cpn % N == id){
-            return res.send(cpn.toString());
+        if(cpn.id == id){
+            return res.json({
+                port : cpn.port,
+                id   : cpn.id,
+                err  : null
+            });
         }
 
-        findSuccessor(cpn, id, function(err, fs_result){
+        findSuccessor(cpn.port, id, function(err, fs_result){
             if(err){
-                return res.send(err.toString());
+                return res.json({err : err.toString()});
             } else{
-                return res.send(fs_result);
+                fs_result = JSON.parse(fs_result);
+                return res.json(fs_result);
             }
         });
-
-        // findSuccessor(successor.port, id, function(err, fs_result){
-        //     if(err){
-        //         return res.send(err.toString());
-        //     } else{
-        //         return res.send(fs_result);
-        //     }
-        // });
     }
-
 });
 
 
 app.get('/predecessor', (req, res) =>{
-    res.send(predecessor.port.toString(10));
+    res.json({
+        port : predecessor.port,
+        id   : predecessor.id,
+        err  : null 
+    });
 });
-
 app.get('/successor', (req, res) =>{
-    res.send(successor.port.toString(10));
+    res.json({
+        port : successor.port,
+        id   : successor.id,
+        err  : null 
+    });
 });
 
 app.get('/join/:port', (req, res) =>{
     let port    = parseInt(req.params.port, 10);
     
-    // predecessor = {
-    //     port : -1,
-    //     id   : -1
-    // };
-    
     findSuccessor(port, myId, function(err, fs_res){
         if(err){
             console.log(err);
         } else {
-            fs_res = parseInt(fs_res, 10);
-            successor = {
-                port : fs_res,
-                id   : fs_res % N
-            };
-            fingerTable[0] = successor;
+            fs_res = JSON.parse(fs_res);
+            successor = fs_res;
+            fingerTable[0] = fs_res;
         }
         res.send('joined node');
     });
@@ -247,12 +269,50 @@ app.get('/notify/:port/:id', (req, res) =>{
     res.send('notify page....');
 });
 
+// app.get('/store/:key/:value', (req, res) => {
+//     let key   = parseInt(req.param.key, 10);
+//     let value = parseInt(req.param.value, 10);
+
+//     let id    = getId(req.param.key);
+
+//     findSuccessor(myPort, id, (err, fs_res) => {
+//         if(err){
+//             console.log(err);
+//             return res.send(err);
+//         } else {
+//             fs_res = JSON.parse(fs_res);
+//             storeUtil(fs_res.port, key, value, id, (err, su_res) => {
+//                 if(err){
+//                     console.log(err);
+//                     return res.send(err);
+//                 } else {
+//                     return res.send(su_res);
+//                 }
+//             });
+//         }
+//     });
+    
+// });
+
+// app.get('/store_util/:key/:value/:id', (req, res) => {
+//     let key   = parseInt(req.param.key, 10);
+//     let value = parseInt(req.param.value, 10);
+//     let id    = parseInt(req.param.id, 10);
+
+//     if(id != myId){
+//         res.send('err... id miss-match');
+//     } else {
+//         psudoDataBase.push({id : id, key : key, value : value});
+//     }
+
+// });
+
 /////////
 
 
 if(process.argv.length == 3){
     myPort = parseInt(process.argv[2], 10);
-    myId   = myPort % 10;
+    myId   = getId(myPort.toString());
     
     successor = {
         port : myPort,
@@ -268,12 +328,17 @@ if(process.argv.length == 3){
         {port : myPort, id : myId},
         {port : myPort, id : myId},
         {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
+        {port : myPort, id : myId},
         {port : myPort, id : myId}
     ];
 
     app.listen(myPort);
     
     setInterval(stabilize, 3000);
-    //setInterval(fixFinger, 3000);
-    
 }
